@@ -1,9 +1,15 @@
 import Link from "next/link";
 import Image from "next/image";
 import { Avatar, Tag } from "./ui";
+import { useState } from "react";
+
+// Base64 1x1 gray pixel for blur placeholder
+const blurDataURL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
 
 export default function VideoCard({ video }) {
   const { title, streamer, viewerCount, thumbnail, slug, category } = video;
+  const [imageError, setImageError] = useState(false);
 
   return (
     <Link href={`/watch/${slug}`} style={{ display: "block" }}>
@@ -24,13 +30,17 @@ export default function VideoCard({ video }) {
             background: "#111",
           }}
         >
-          {thumbnail ? (
+          {thumbnail && !imageError ? (
             <Image
               src={thumbnail}
               alt={title}
               fill
-              sizes="(max-width: 768px) 100vw, 33vw"
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
               style={{ objectFit: "cover" }}
+              loading="lazy"
+              placeholder="blur"
+              blurDataURL={blurDataURL}
+              onError={() => setImageError(true)}
             />
           ) : (
             <div

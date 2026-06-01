@@ -16,6 +16,8 @@ export default function VideoPlayer({ hlsUrl }) {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [muted, setMuted] = useState(true);
+  const retryDelayRef = useRef(1000);
+  const retryTimeoutRef = useRef(null);
 
   useEffect(() => {
     if (!hlsUrl || !videoRef.current) return;
@@ -24,6 +26,7 @@ export default function VideoPlayer({ hlsUrl }) {
     // Bug fix: reset state on every hlsUrl change
     setError(null);
     setLoading(true);
+    retryDelayRef.current = 1000;
 
     // Safari — native HLS support
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -31,8 +34,10 @@ export default function VideoPlayer({ hlsUrl }) {
       video.play().catch(() => {});
       setLoading(false);
       return () => {
-        video.src = "";
-      }; // cleanup: clear src when hlsUrl changes
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      };
     }
 
     if (!Hls.isSupported()) {
@@ -50,17 +55,45 @@ export default function VideoPlayer({ hlsUrl }) {
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
       video.play().catch(() => {});
       setLoading(false);
+      // Reset retry delay on successful play
+      retryDelayRef.current = 1000;
     });
 
     hls.on(Hls.Events.ERROR, (_, data) => {
       if (!data.fatal) return;
       setError("ไม่สามารถโหลด stream ได้ กรุณารอสักครู่...");
       setLoading(false);
-      setTimeout(() => hls.loadSource(hlsUrl), 5000);
+
+      // Exponential backoff retry
+      const delay = retryDelayRef.current;
+      retryTimeoutRef.current = setTimeout(() => {
+        hls.loadSource(hlsUrl);
+        retryDelayRef.current = Math.min(delay * 2, 30000);
+      }, delay);
     });
+
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+      console.log(
+        `[HLS] Quality switched to level ${data.level}, height: ${data.height}`,
+      );
+    });
+
+    // Visibility change handler - pause when hidden, play when visible
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        video.pause();
+      } else {
+        video.play().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     // Bug fix: destroy on every effect cleanup, not just unmount
     return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
       hls.destroy();
       hlsRef.current = null;
     };

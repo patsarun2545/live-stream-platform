@@ -1,27 +1,94 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import axios from "axios";
 import VideoPlayer from "@/components/VideoPlayer";
 import ChatBox from "@/components/ChatBox";
-import { Avatar, Tag, Spinner } from "@/components/ui";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { Avatar, Tag } from "@/components/ui";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function WatchClient({ slug }) {
   const { user } = useAuth();
   const [video, setVideo] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentsPage, setCommentsPage] = useState(1);
+  const [commentsTotal, setCommentsTotal] = useState(0);
+  const [commentsHasMore, setCommentsHasMore] = useState(false);
+  const [loadingComments, setLoadingComments] = useState(false);
   const [loading, setLoading] = useState(true);
   const [liked, setLiked] = useState(false);
   const [comment, setComment] = useState("");
   const [posting, setPosting] = useState(false);
   const commentRef = useRef(null);
 
+  const loadComments = useCallback(
+    async (page = 1, append = false) => {
+      if (!video?._id) return;
+      setLoadingComments(true);
+      try {
+        const { data } = await axios.get(
+          `/api/videos/${video._id}/comments?page=${page}&limit=20`,
+        );
+        if (append) {
+          setComments((prev) => [...prev, ...data.comments]);
+        } else {
+          setComments(data.comments);
+        }
+        setCommentsTotal(data.total);
+        setCommentsHasMore(data.hasMore);
+        setCommentsPage(data.page);
+      } catch (err) {
+        console.error("Failed to load comments:", err);
+      } finally {
+        setLoadingComments(false);
+      }
+    },
+    [video?._id],
+  );
+
   useEffect(() => {
     axios
       .get(`/api/videos/${slug}`)
-      .then((res) => setVideo(res.data.video))
+      .then((res) => {
+        setVideo(res.data.video);
+        setLiked(res.data.video.isLiked || false);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [slug]);
+
+  useEffect(() => {
+    if (video?._id) {
+      loadComments(1, false);
+    }
+  }, [video?._id, loadComments]);
+
+  // Viewer beacon effect
+  useEffect(() => {
+    if (!video?._id) return;
+
+    // Join viewer count on mount
+    const joinViewer = async () => {
+      try {
+        const { data } = await axios.post(
+          `/api/videos/${video._id}/viewers/join`,
+        );
+        setVideo((v) => ({ ...v, viewerCount: data.viewerCount }));
+      } catch {
+        /* silent */
+      }
+    };
+
+    joinViewer();
+
+    // Leave viewer count on unmount using sendBeacon
+    const leaveViewer = () => {
+      const data = new Blob([JSON.stringify({})], { type: "application/json" });
+      if (video?._id) navigator.sendBeacon(`/api/videos/${video._id}/viewers/leave`, data);
+    };
+
+    return leaveViewer;
+  }, [video?._id]);
 
   const handleLike = async () => {
     if (liked || !user) return;
@@ -41,10 +108,9 @@ export default function WatchClient({ slug }) {
       const { data } = await axios.post(`/api/videos/${video._id}/comments`, {
         text: comment.trim(),
       });
-      setVideo((v) => ({
-        ...v,
-        comments: [data.comment, ...(v.comments ?? [])],
-      }));
+      // Prepend new comment to state without refetching
+      setComments((prev) => [data.comment, ...prev]);
+      setCommentsTotal((prev) => prev + 1);
       setComment("");
       commentRef.current?.focus();
     } catch (err) {
@@ -54,7 +120,11 @@ export default function WatchClient({ slug }) {
     }
   };
 
-  if (loading) return <Spinner />;
+  const handleLoadMoreComments = () => {
+    loadComments(commentsPage + 1, true);
+  };
+
+  if (loading) return <WatchSkeleton />;
 
   if (!video)
     return (
@@ -67,7 +137,11 @@ export default function WatchClient({ slug }) {
   return (
     <div
       className="container"
-      style={{ paddingTop: "20px", paddingBottom: "40px" }}
+      style={{
+        paddingTop: "20px",
+        paddingBottom: "40px",
+        animation: "fadeIn 200ms ease-in",
+      }}
     >
       <div
         style={{
@@ -79,7 +153,34 @@ export default function WatchClient({ slug }) {
       >
         {/* Left: Player + Info + Comments */}
         <div>
-          <VideoPlayer hlsUrl={video.hlsUrl} />
+          <ErrorBoundary
+            fallback={
+              <div
+                style={{
+                  background: "var(--bg-secondary)",
+                  borderRadius: "var(--radius)",
+                  padding: "40px 20px",
+                  textAlign: "center",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <span
+                  style={{
+                    fontSize: "32px",
+                    marginBottom: "12px",
+                    display: "block",
+                  }}
+                >
+                  📡
+                </span>
+                <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
+                  ไม่สามารถโหลดวิดีโอได้ กรุณารีโหลดหน้า
+                </p>
+              </div>
+            }
+          >
+            <VideoPlayer hlsUrl={video.hlsUrl} />
+          </ErrorBoundary>
           <StreamInfo
             video={video}
             liked={liked}
@@ -87,19 +188,45 @@ export default function WatchClient({ slug }) {
             onLike={handleLike}
           />
           <CommentsSection
-            video={video}
+            comments={comments}
+            commentsTotal={commentsTotal}
+            commentsHasMore={commentsHasMore}
+            loadingComments={loadingComments}
             user={user}
             comment={comment}
             setComment={setComment}
             posting={posting}
             onSubmit={handleComment}
+            onLoadMore={handleLoadMoreComments}
             inputRef={commentRef}
           />
         </div>
 
         {/* Right: Live Chat */}
         <div style={{ position: "sticky", top: "76px" }}>
-          <ChatBox videoId={video._id} user={user} />
+          <ErrorBoundary
+            fallback={
+              <div
+                style={{
+                  background: "var(--bg-secondary)",
+                  borderRadius: "var(--radius)",
+                  padding: "20px",
+                  textAlign: "center",
+                  border: "1px solid var(--border)",
+                  minHeight: "200px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
+                  แชทไม่พร้อมใช้งานชั่วคราว
+                </p>
+              </div>
+            }
+          >
+            <ChatBox videoId={video._id} user={user} />
+          </ErrorBoundary>
         </div>
       </div>
     </div>
@@ -202,18 +329,22 @@ function StreamInfo({ video, liked, user, onLike }) {
 
 // ─── CommentsSection ─────────────────────────────────────────────────────────
 function CommentsSection({
-  video,
+  comments,
+  commentsTotal,
+  commentsHasMore,
+  loadingComments,
   user,
   comment,
   setComment,
   posting,
   onSubmit,
+  onLoadMore,
   inputRef,
 }) {
   return (
     <div style={{ marginTop: "28px" }}>
       <h2 style={{ fontSize: "16px", fontWeight: 700, marginBottom: "16px" }}>
-        ความคิดเห็น ({video.comments?.length ?? 0})
+        ความคิดเห็น ({commentsTotal ?? 0})
       </h2>
 
       {user ? (
@@ -256,10 +387,30 @@ function CommentsSection({
       )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-        {video.comments?.map((c, i) => (
+        {comments.map((c, i) => (
           <CommentItem key={c._id ?? i} comment={c} />
         ))}
       </div>
+
+      {commentsHasMore && (
+        <button
+          onClick={onLoadMore}
+          disabled={loadingComments}
+          style={{
+            marginTop: "16px",
+            padding: "8px 16px",
+            background: "var(--bg-hover)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius)",
+            color: "var(--text-primary)",
+            cursor: loadingComments ? "default" : "pointer",
+            fontSize: "13px",
+            opacity: loadingComments ? 0.5 : 1,
+          }}
+        >
+          {loadingComments ? "กำลังโหลด..." : "โหลดความคิดเห็นเพิ่มเติม"}
+        </button>
+      )}
     </div>
   );
 }
@@ -287,6 +438,73 @@ function CommentItem({ comment: c }) {
         >
           {c.text}
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── WatchSkeleton ─────────────────────────────────────────────────────────────
+function WatchSkeleton() {
+  return (
+    <div
+      className="container"
+      style={{ paddingTop: "20px", paddingBottom: "40px" }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 340px",
+          gap: "20px",
+          alignItems: "start",
+        }}
+      >
+        {/* Left: Player + Info + Comments Skeleton */}
+        <div>
+          {/* Video Player Skeleton */}
+          <div
+            style={{
+              aspectRatio: "16/9",
+              background: "var(--bg-secondary)",
+              borderRadius: "var(--radius)",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
+          />
+          {/* Title Skeleton */}
+          <div
+            style={{
+              width: "60%",
+              height: "24px",
+              background: "var(--bg-secondary)",
+              borderRadius: "var(--radius-sm)",
+              marginTop: "16px",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
+          />
+          {/* Streamer Info Skeleton */}
+          <div
+            style={{
+              width: "40%",
+              height: "16px",
+              background: "var(--bg-secondary)",
+              borderRadius: "var(--radius-sm)",
+              marginTop: "8px",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
+          />
+        </div>
+
+        {/* Right: Chat Panel Skeleton */}
+        <div style={{ position: "sticky", top: "76px" }}>
+          <div
+            style={{
+              height: "500px",
+              background: "var(--bg-secondary)",
+              borderRadius: "var(--radius)",
+              border: "1px solid var(--border)",
+              animation: "pulse 1.5s ease-in-out infinite",
+            }}
+          />
+        </div>
       </div>
     </div>
   );

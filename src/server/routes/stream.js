@@ -2,6 +2,7 @@ const express = require("express");
 const User = require("../models/User");
 const Video = require("../models/Video");
 const { protect, streamerOnly } = require("../middleware/auth");
+const { activeSessions } = require("../mediaServer");
 
 const router = express.Router();
 
@@ -18,10 +19,40 @@ router.get("/key", protect, streamerOnly, async (req, res) => {
 // POST /api/stream/key/reset
 router.post("/key/reset", protect, streamerOnly, async (req, res) => {
   try {
+    const { confirm } = req.body;
+
+    // Check confirm flag
+    if (!confirm) {
+      return res.status(400).json({
+        message: "กรุณายืนยันการ reset — stream ที่กำลัง live จะถูกตัด",
+      });
+    }
+
     const user = await User.findById(req.user._id).select("+streamKey");
+    const oldKey = user.streamKey;
+
+    // Generate new stream key
     user.generateStreamKey();
     await user.save();
-    res.json({ streamKey: user.streamKey });
+
+    // Kill ffmpeg process of old key if active
+    const oldSession = activeSessions.get(oldKey);
+    if (oldSession) {
+      oldSession.kill("SIGTERM");
+      activeSessions.delete(oldKey);
+    }
+
+    // Update live video to ended
+    await Video.findOneAndUpdate(
+      { streamer: user._id, status: "live" },
+      { status: "ended", endedAt: new Date() },
+      { sort: { createdAt: -1 } },
+    );
+
+    res.json({
+      streamKey: user.streamKey,
+      message: "Stream เก่าถูกยกเลิกแล้ว",
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

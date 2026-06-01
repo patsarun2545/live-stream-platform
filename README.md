@@ -6,15 +6,15 @@ A full-stack live streaming platform with RTMP ingest, HLS playback, real-time c
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 14 (App Router), React 18 |
-| Backend | Node.js, Express.js |
-| Database | MongoDB, Mongoose ODM |
-| Auth | JWT (Bearer Token), Context API |
+| Layer     | Technology                                       |
+| --------- | ------------------------------------------------ |
+| Frontend  | Next.js 14 (App Router), React 18                |
+| Backend   | Node.js, Express.js                              |
+| Database  | MongoDB, Mongoose ODM                            |
+| Auth      | JWT (Bearer Token), Context API                  |
 | Streaming | Node-Media-Server (RTMP), FFmpeg (HLS transcode) |
-| Real-time | WebSocket (ws) |
-| SEO | Sitemap, robots.txt, Open Graph, JSON-LD |
+| Real-time | WebSocket (ws)                                   |
+| SEO       | Sitemap, robots.txt, Open Graph, JSON-LD         |
 
 ---
 
@@ -87,10 +87,10 @@ root/
 
 ## 🔐 Middleware
 
-| Middleware | File | Responsibility |
-|-----------|------|----------------|
-| Auth | `auth.js` | Validates JWT from `Authorization: Bearer <token>` |
-| Role Guard | `auth.js` | Restricts streamer-only routes (`streamerOnly`) |
+| Middleware   | File                 | Responsibility                                       |
+| ------------ | -------------------- | ---------------------------------------------------- |
+| Auth         | `auth.js`            | Validates JWT from `Authorization: Bearer <token>`   |
+| Role Guard   | `auth.js`            | Restricts streamer-only routes (`streamerOnly`)      |
 | Rate Limiter | `express-rate-limit` | 10 requests / 15 min on auth endpoints in production |
 
 ---

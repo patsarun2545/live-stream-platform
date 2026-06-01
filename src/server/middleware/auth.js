@@ -3,13 +3,21 @@ const User = require("../models/User");
 
 const protect = async (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
+    // Try to get token from cookie first (httpOnly cookie)
+    let token = req.cookies?.token;
 
-    if (!authHeader?.startsWith("Bearer ")) {
+    // Fallback to Authorization header for API clients
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.split(" ")[1];
+      }
+    }
+
+    if (!token) {
       return res.status(401).json({ message: "ไม่มี token กรุณา login ก่อน" });
     }
 
-    const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     req.user = await User.findById(decoded.id).select("-passwordHash");

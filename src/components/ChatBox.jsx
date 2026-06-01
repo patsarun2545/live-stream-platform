@@ -7,23 +7,31 @@ const MAX_MESSAGES = 200;
 function buildWsUrl(videoId) {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   const port = process.env.NEXT_PUBLIC_WS_PORT || 3001;
-  return `${protocol}://${window.location.hostname}:${port}/chat/${videoId}`;
+  const url = `${protocol}://${window.location.hostname}:${port}/chat/${videoId}`;
+  return url;
 }
 
 export default function ChatBox({ videoId, user }) {
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [shouldStopRetry, setShouldStopRetry] = useState(false);
   const wsRef = useRef(null);
   const bottomRef = useRef(null);
   const retryRef = useRef(null);
+  const retryDelayRef = useRef(1000);
   const mountedRef = useRef(true); // track mount state to prevent post-unmount retries
+  const inputRef = useRef(null);
 
   const connect = useCallback(() => {
+    if (shouldStopRetry) return;
+
     const ws = new WebSocket(buildWsUrl(videoId));
 
     ws.onopen = () => {
       setConnected(true);
+      setRetryCount(0);
+      retryDelayRef.current = 1000;
       clearTimeout(retryRef.current);
     };
     ws.onmessage = (e) => {
@@ -34,24 +42,59 @@ export default function ChatBox({ videoId, user }) {
         /* ignore malformed frames */
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnected(false);
-      if (mountedRef.current) {
-        retryRef.current = setTimeout(connect, 3000);
+
+      // Stop retry for policy violation or server error
+      if (event.code === 1008 || event.code === 1011) {
+        setShouldStopRetry(true);
+        return;
+      }
+
+      if (mountedRef.current && !shouldStopRetry && !navigator.onLine) {
+        // Don't retry if offline
+        return;
+      }
+
+      if (mountedRef.current && !shouldStopRetry) {
+        const delay = retryDelayRef.current;
+        setRetryCount((prev) => prev + 1);
+        retryRef.current = setTimeout(() => {
+          retryDelayRef.current = Math.min(delay * 2, 30000);
+          connect();
+        }, delay);
       }
     };
     ws.onerror = () => ws.close();
 
     wsRef.current = ws;
-  }, [videoId]);
+  }, [videoId, shouldStopRetry]);
 
   useEffect(() => {
     mountedRef.current = true;
     connect();
+
+    // Online/offline event listeners
+    const handleOnline = () => {
+      setShouldStopRetry(false);
+      retryDelayRef.current = 1000;
+      setRetryCount(0);
+      connect();
+    };
+
+    const handleOffline = () => {
+      clearTimeout(retryRef.current);
+    };
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
     return () => {
       mountedRef.current = false;
       clearTimeout(retryRef.current);
       wsRef.current?.close();
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, [connect]);
 
@@ -61,16 +104,16 @@ export default function ChatBox({ videoId, user }) {
   }, [messages]);
 
   const sendMessage = () => {
-    if (!input.trim() || wsRef.current?.readyState !== WebSocket.OPEN || !user)
+    const text = inputRef.current?.value || "";
+    if (!text.trim() || wsRef.current?.readyState !== WebSocket.OPEN || !user)
       return;
     wsRef.current.send(
       JSON.stringify({
         type: "message",
-        text: input.trim(),
-        username: user.username,
+        text: text.trim(),
       }),
     );
-    setInput("");
+    if (inputRef.current) inputRef.current.value = "";
   };
 
   const handleKeyDown = (e) => {
@@ -78,6 +121,22 @@ export default function ChatBox({ videoId, user }) {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  // Get connection status message
+  const getConnectionStatus = () => {
+    if (connected) return "เชื่อมต่อแล้ว";
+    if (shouldStopRetry) return "ไม่สามารถเชื่อมต่อได้";
+    if (retryCount <= 2) return "กำลังเชื่อมต่อ...";
+    if (retryCount <= 5) return `เชื่อมต่อใหม่... (ครั้งที่ ${retryCount})`;
+    return "ไม่สามารถเชื่อมต่อได้";
+  };
+
+  const handleReload = () => {
+    setShouldStopRetry(false);
+    retryDelayRef.current = 1000;
+    setRetryCount(0);
+    connect();
   };
 
   return (
@@ -91,6 +150,31 @@ export default function ChatBox({ videoId, user }) {
             background: connected ? "#00c853" : "var(--text-dim)",
           }}
         />
+        <span
+          style={{
+            fontSize: "12px",
+            color: "var(--text-muted)",
+            marginLeft: "auto",
+          }}
+        >
+          {getConnectionStatus()}
+        </span>
+        {retryCount >= 6 && !connected && !shouldStopRetry && (
+          <button
+            onClick={handleReload}
+            style={{
+              padding: "4px 10px",
+              fontSize: "12px",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--accent)",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            ลองใหม่
+          </button>
+        )}
       </div>
 
       {/* Messages */}
@@ -124,9 +208,8 @@ export default function ChatBox({ videoId, user }) {
         {user ? (
           <div style={{ display: "flex", gap: "8px" }}>
             <input
+              ref={inputRef}
               className="input-base"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="พิมพ์ข้อความ..."
               maxLength={200}
@@ -138,7 +221,6 @@ export default function ChatBox({ videoId, user }) {
             />
             <button
               onClick={sendMessage}
-              disabled={!input.trim()}
               className="btn-primary"
               style={{
                 width: "auto",

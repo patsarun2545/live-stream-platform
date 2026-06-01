@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useReducer } from "react";
 import axios from "axios";
 import VideoCard from "@/components/VideoCard";
 
@@ -13,53 +13,93 @@ const CATEGORIES = [
 ];
 const LIMIT = 20;
 
+const initialState = {
+  videos: [],
+  category: "ทั้งหมด",
+  search: "",
+  query: "",
+  page: 1,
+  total: 0,
+  loading: true,
+};
+
+function reducer(state, action) {
+  switch (action.type) {
+    case "SET_FILTER":
+      return {
+        ...state,
+        category: action.payload.category,
+        query: action.payload.query,
+        page: 1,
+      };
+    case "SET_PAGE":
+      return {
+        ...state,
+        page: action.payload,
+      };
+    case "FETCH_START":
+      return {
+        ...state,
+        loading: true,
+      };
+    case "FETCH_SUCCESS":
+      return {
+        ...state,
+        videos: action.payload.videos,
+        total: action.payload.total,
+        loading: false,
+      };
+    case "FETCH_ERROR":
+      return {
+        ...state,
+        loading: false,
+      };
+    case "SET_SEARCH":
+      return {
+        ...state,
+        search: action.payload,
+      };
+    default:
+      return state;
+  }
+}
+
 export default function HomeClient() {
-  const [videos, setVideos] = useState([]);
-  const [category, setCategory] = useState("ทั้งหมด");
-  const [search, setSearch] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-
-  const fetchVideos = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = { page, limit: LIMIT };
-      if (category !== "ทั้งหมด") params.category = category;
-      if (query) params.search = query;
-      const { data } = await axios.get("/api/videos", { params });
-      setVideos(data.videos);
-      setTotal(data.total);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [category, query, page]);
+  const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
+    const fetchVideos = async () => {
+      dispatch({ type: "FETCH_START" });
+      try {
+        const params = { page: state.page, limit: LIMIT };
+        if (state.category !== "ทั้งหมด") params.category = state.category;
+        if (state.query) params.search = state.query;
+        const { data } = await axios.get("/api/videos", { params });
+        dispatch({
+          type: "FETCH_SUCCESS",
+          payload: { videos: data.videos, total: data.total },
+        });
+      } catch (err) {
+        console.error(err);
+        dispatch({ type: "FETCH_ERROR" });
+      }
+    };
+
     fetchVideos();
-  }, [fetchVideos]);
-
-  // Reset to page 1 when filters change — setPage(1) will trigger fetchVideos via page dependency
-  // Use a ref to skip the reset on the very first render to avoid double fetch on mount
-  const isFirstRender = useRef(true);
-  useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    setPage(1);
-  }, [category, query]);
+  }, [state.category, state.query, state.page]);
 
   // Debounce search input
   useEffect(() => {
-    const t = setTimeout(() => setQuery(search), 400);
+    const t = setTimeout(() => {
+      dispatch({
+        type: "SET_FILTER",
+        payload: { category: state.category, query: state.search },
+      });
+    }, 400);
     return () => clearTimeout(t);
-  }, [search]);
+  }, [state.search, state.category]);
 
-  const totalPages = Math.ceil(total / LIMIT);
+  const totalPages = Math.ceil(state.total / LIMIT);
 
   return (
     <div
@@ -71,8 +111,10 @@ export default function HomeClient() {
         type="search"
         className="input-base"
         placeholder="ค้นหา stream..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        value={state.search}
+        onChange={(e) =>
+          dispatch({ type: "SET_SEARCH", payload: e.target.value })
+        }
         style={{ marginBottom: "16px", fontSize: "15px" }}
       />
 
@@ -86,11 +128,16 @@ export default function HomeClient() {
         }}
       >
         {CATEGORIES.map((cat) => {
-          const active = cat === category;
+          const active = cat === state.category;
           return (
             <button
               key={cat}
-              onClick={() => setCategory(cat)}
+              onClick={() =>
+                dispatch({
+                  type: "SET_FILTER",
+                  payload: { category: cat, query: state.query },
+                })
+              }
               style={{
                 background: active ? "var(--accent)" : "var(--bg-card)",
                 border: `1px solid ${active ? "var(--accent)" : "var(--border-input)"}`,
@@ -110,9 +157,9 @@ export default function HomeClient() {
       </div>
 
       {/* Content */}
-      {loading ? (
+      {state.loading ? (
         <SkeletonGrid />
-      ) : videos.length === 0 ? (
+      ) : state.videos.length === 0 ? (
         <EmptyState />
       ) : (
         <>
@@ -123,7 +170,7 @@ export default function HomeClient() {
               gap: "16px",
             }}
           >
-            {videos.map((v) => (
+            {state.videos.map((v) => (
               <VideoCard key={v._id} video={v} />
             ))}
           </div>
@@ -139,17 +186,21 @@ export default function HomeClient() {
               }}
             >
               <PageButton
-                onClick={() => setPage((p) => p - 1)}
-                disabled={page === 1}
+                onClick={() =>
+                  dispatch({ type: "SET_PAGE", payload: state.page - 1 })
+                }
+                disabled={state.page === 1}
               >
                 ← ก่อนหน้า
               </PageButton>
               <span style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-                {page} / {totalPages}
+                {state.page} / {totalPages}
               </span>
               <PageButton
-                onClick={() => setPage((p) => p + 1)}
-                disabled={page === totalPages}
+                onClick={() =>
+                  dispatch({ type: "SET_PAGE", payload: state.page + 1 })
+                }
+                disabled={state.page === totalPages}
               >
                 ถัดไป →
               </PageButton>

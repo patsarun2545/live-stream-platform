@@ -16,6 +16,53 @@ const ROLES = [
   { value: "streamer", label: "สตรีมเมอร์" },
 ];
 
+// Helper function to validate registration input (same as server-side)
+function validateRegisterInput(body) {
+  const { username, email, password } = body;
+
+  // Validate username: only a-z, A-Z, 0-9, _ allowed
+  if (!username || !/^[a-zA-Z0-9_]+$/.test(username)) {
+    return {
+      valid: false,
+      message: "ชื่อผู้ใช้ต้องประกอบด้วยตัวอักษร a-z, A-Z, 0-9 และ _ เท่านั้น",
+    };
+  }
+
+  // Validate email pattern
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email)) {
+    return { valid: false, message: "รูปแบบอีเมลไม่ถูกต้อง" };
+  }
+
+  // Validate password: at least 8 characters
+  if (!password || password.length < 8) {
+    return { valid: false, message: "รหัสผ่านต้องมีอย่างน้อย 8 ตัวอักษร" };
+  }
+
+  // Validate password: at least 1 number
+  if (!/\d/.test(password)) {
+    return { valid: false, message: "รหัสผ่านต้องมีตัวเลขอย่างน้อย 1 ตัว" };
+  }
+
+  return { valid: true };
+}
+
+// Helper function to calculate password strength
+function getPasswordStrength(password) {
+  if (!password) return { level: "weak", label: "" };
+
+  let score = 0;
+  if (password.length >= 8) score++;
+  if (password.length >= 12) score++;
+  if (/\d/.test(password)) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/[^a-zA-Z0-9]/.test(password)) score++;
+
+  if (score <= 2) return { level: "weak", label: "อ่อน" };
+  if (score <= 3) return { level: "medium", label: "ปานกลาง" };
+  return { level: "strong", label: "แข็งแรง" };
+}
+
 export default function RegisterPage() {
   const router = useRouter();
   const { login } = useAuth();
@@ -30,6 +77,14 @@ export default function RegisterPage() {
 
   const handleSubmit = async () => {
     setError("");
+
+    // Client-side validation before API call
+    const validation = validateRegisterInput(form);
+    if (!validation.valid) {
+      setError(validation.message);
+      return;
+    }
+
     setLoading(true);
     try {
       const { data } = await axios.post("/api/auth/register", form);
@@ -41,6 +96,8 @@ export default function RegisterPage() {
       setLoading(false);
     }
   };
+
+  const passwordStrength = getPasswordStrength(form.password);
 
   return (
     <div style={centerStyle}>
@@ -60,6 +117,22 @@ export default function RegisterPage() {
                 setForm((p) => ({ ...p, [key]: e.target.value }))
               }
             />
+            {key === "password" && form.password && (
+              <div
+                style={{
+                  marginTop: "6px",
+                  fontSize: "12px",
+                  color:
+                    passwordStrength.level === "weak"
+                      ? "var(--danger)"
+                      : passwordStrength.level === "medium"
+                        ? "var(--accent)"
+                        : "var(--success)",
+                }}
+              >
+                ความแข็งแรงรหัสผ่าน: {passwordStrength.label}
+              </div>
+            )}
           </div>
         ))}
 
