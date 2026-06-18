@@ -252,5 +252,5 @@ npm start
 
 **Your Name**  
 Full Stack Developer (Next.js, Express, MongoDB)  
-📧 your@email.com  
+📧 patsarun2545@gmail.com  
 🔗 [github.com/your-username](https://github.com/your-username)
